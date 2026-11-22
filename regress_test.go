@@ -111,42 +111,60 @@ func TestFullDestinationQueuesNothing(t *testing.T) {
 	}
 }
 
-// grow makes room only when there is none, and then makes it by doubling, so
-// that n appends cost a few copies and not n.
-// growReuses reports whether grow keeps a slice that has room. A grow that
-// reallocated every time would make the large tests quadratic, so the suite
-// would hang instead of failing: TestMain asks first and stops at once.
-func growReuses() bool {
+// growFault is what is wrong with grow's policy, or "" when nothing is: it
+// makes room only when there is none, makes it by doubling, and keeps what the
+// slice held. A grow that reallocated every time, or added a fixed step, would
+// make the large tests quadratic, so the suite would hang instead of failing:
+// TestMain asks first and stops at once. Every loop here is bounded by a
+// constant, so the check itself cannot hang.
+func growFault() string {
 	s := make([]int, 3, 10)
-	g := grow(s, 7)
-	return &g[0] == &s[0] && cap(g) == 10
+	if g := grow(s, 7); &g[0] != &s[0] || cap(g) != 10 {
+		return fmt.Sprintf("room for 7 more: reallocated (cap %d)", cap(g))
+	}
+	for l := 1; l <= 1024; l++ {
+		full := make([]int, l)
+		full[l-1] = l
+		g := grow(full, 1)
+		if len(g) != l || cap(g) < 2*l || g[l-1] != l {
+			return fmt.Sprintf("a full slice of %d: len %d cap %d, want a copy with cap >= %d", l, len(g), cap(g), 2*l)
+		}
+	}
+	if g := grow(make([]int, 3, 3), 100); cap(g) != 103 {
+		return fmt.Sprintf("a large request of 100 on 3: cap %d, want 103", cap(g))
+	}
+	if g := grow([]int(nil), 100); cap(g) != 100 || len(g) != 0 {
+		return fmt.Sprintf("a large first request: len %d cap %d", len(g), cap(g))
+	}
+	if g := grow([]int(nil), 1); cap(g) != 1 {
+		return fmt.Sprintf("a first small request: cap %d, want 1", cap(g))
+	}
+	var p []int
+	copies := 0
+	for i := 0; i < 1<<14; i++ {
+		before := cap(p)
+		p = push(p, i)
+		if cap(p) != before {
+			copies++
+		}
+	}
+	if copies > 16 {
+		return fmt.Sprintf("%d pushes made %d copies, want at most 16", 1<<14, copies)
+	}
+	return ""
 }
 
 func TestMain(m *testing.M) {
-	if !growReuses() {
-		fmt.Fprintln(os.Stderr, "grow reallocates a slice that has room: the large tests would not end")
+	if f := growFault(); f != "" {
+		fmt.Fprintln(os.Stderr, "grow: "+f+": the large tests would not end")
 		os.Exit(1)
 	}
 	os.Exit(m.Run())
 }
 
 func TestGrow(t *testing.T) {
-	if !growReuses() {
-		t.Error("room for 7 more: reallocated")
-	}
-	s := make([]int, 3, 10)
-	g := grow(s, 8)
-	if &g[0] == &s[0] || len(g) != 3 || cap(g) < 11 {
-		t.Errorf("no room for 8 more: len %d cap %d", len(g), cap(g))
-	}
-	if g := grow([]int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17}[:17:17], 1); cap(g) != 34 {
-		t.Errorf("a full slice of 17 doubled to %d, want 34", cap(g))
-	}
-	if g := grow([]int(nil), 100); cap(g) != 100 || len(g) != 0 {
-		t.Errorf("a large first request: len %d cap %d", len(g), cap(g))
-	}
-	if g := grow([]int(nil), 1); cap(g) != 16 {
-		t.Errorf("a first small request: cap %d, want 16", cap(g))
+	if f := growFault(); f != "" {
+		t.Error(f)
 	}
 }
 

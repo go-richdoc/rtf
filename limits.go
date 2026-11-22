@@ -26,7 +26,10 @@ var ErrSyntax = errors.New("rtf: malformed binary data")
 // document. A reader that quietly truncated would hand back a document that
 // looks complete and is not.
 type Limits struct {
-	// MaxInput is the largest source, in bytes.
+	// MaxInput is the largest source, in bytes. The default is 16 MiB, so that
+	// with the amplification bound (see the README) the most Parse can allocate
+	// under the default limits is about 1 GiB; raise it for a larger source and
+	// the worst case grows with it.
 	MaxInput int
 
 	// MaxDepth is how deeply groups may nest. The reader keeps its own stack
@@ -55,7 +58,7 @@ type Limits struct {
 }
 
 const (
-	defaultMaxInput = 256 << 20
+	defaultMaxInput = 16 << 20 // 256 MiB before v0.1.2: 64 times that is 16 GiB
 	defaultMaxDepth = 256
 	defaultMaxBin   = 64 << 20
 	defaultMaxPict  = 64 << 20

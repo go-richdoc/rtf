@@ -53,6 +53,11 @@ var amplificationCases = []amplificationCase{
 	{"list items", func(n int) string {
 		return `{\rtf1\ansi {\*\listtable{\list\listid1{\listlevel\levelnfc0}}}{\*\listoverridetable{\listoverride\listid1\ls1}}` + rep(`\ls1 a\par `, n) + `}`
 	}},
+	{"footnotes", func(n int) string { return `{\rtf1\ansi ` + rep(`{\footnote a}`, n) + `}` }},
+	{"footnotes with format", func(n int) string { return `{\rtf1\ansi ` + rep(`{\footnote\b a}`, n) + `}` }},
+	{"cells without a row", func(n int) string { return `{\rtf1\ansi \trowd\intbl ` + rep(`\cell`, n) + `}` }},
+	{"footnotes and cells", func(n int) string { return `{\rtf1\ansi ` + rep(`{\footnote a}\cell`, n) + `}` }},
+	{"densest inlines", func(n int) string { return `{\rtf1\ansi \b\strike ` + rep(`\i a\i0 a`, n) + `}` }},
 	{"deep groups", func(n int) string { return `{\rtf1` + rep(`{`, n) + `a` + rep(`}`, n) + `}` }},
 	{"long bookmark name", func(n int) string { return `{\rtf1\ansi {\*\bkmkstart ` + strings.Repeat("a", n) + `}x\par}` }},
 	{"long style name", func(n int) string { return `{\rtf1\ansi {\stylesheet{\s1 ` + strings.Repeat("a", n) + `;}}x\par}` }},

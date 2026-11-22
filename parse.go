@@ -271,7 +271,7 @@ func (r *reader) finalize() {
 		blocks := r.closeFrame()
 		if len(blocks) > 0 {
 			r.node()
-			st.parent.segs = append(st.parent.segs, seg{inl: richdoc.Footnote{Blocks: blocks}})
+			st.parent.segs = push(st.parent.segs, seg{inl: richdoc.Footnote{Blocks: blocks}})
 		}
 	case st.own&ownField != 0:
 		r.endField()
@@ -280,7 +280,7 @@ func (r *reader) finalize() {
 	case st.own&ownBookmark != 0:
 		if name := strings.TrimSpace(string(r.bkName)); name != "" && name != "_GoBack" {
 			r.node()
-			st.fr.segs = append(st.fr.segs, seg{inl: richdoc.Anchor{ID: name}})
+			st.fr.segs = push(st.fr.segs, seg{inl: richdoc.Anchor{ID: name}})
 		}
 	}
 }
