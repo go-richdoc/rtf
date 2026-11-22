@@ -6,6 +6,8 @@ package rtf
 import (
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"os"
 	"runtime"
 	"strings"
 	"testing"
@@ -111,11 +113,28 @@ func TestFullDestinationQueuesNothing(t *testing.T) {
 
 // grow makes room only when there is none, and then makes it by doubling, so
 // that n appends cost a few copies and not n.
-func TestGrow(t *testing.T) {
+// growReuses reports whether grow keeps a slice that has room. A grow that
+// reallocated every time would make the large tests quadratic, so the suite
+// would hang instead of failing: TestMain asks first and stops at once.
+func growReuses() bool {
 	s := make([]int, 3, 10)
-	if g := grow(s, 7); &g[0] != &s[0] || cap(g) != 10 {
-		t.Errorf("room for 7 more: reallocated (cap %d)", cap(g))
+	g := grow(s, 7)
+	return &g[0] == &s[0] && cap(g) == 10
+}
+
+func TestMain(m *testing.M) {
+	if !growReuses() {
+		fmt.Fprintln(os.Stderr, "grow reallocates a slice that has room: the large tests would not end")
+		os.Exit(1)
 	}
+	os.Exit(m.Run())
+}
+
+func TestGrow(t *testing.T) {
+	if !growReuses() {
+		t.Error("room for 7 more: reallocated")
+	}
+	s := make([]int, 3, 10)
 	g := grow(s, 8)
 	if &g[0] == &s[0] || len(g) != 3 || cap(g) < 11 {
 		t.Errorf("no room for 8 more: len %d cap %d", len(g), cap(g))
