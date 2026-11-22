@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\\rtf1\\uc3\\u55357{\\b ?}\\u56832\\'41\\uc0\\u-1 \\u0 x}")
