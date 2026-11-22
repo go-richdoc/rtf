@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  GOWORK: "off"
+
+# Least privilege, named rather than inherited. Nothing below writes.
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    # The race detector needs cgo at test time; the library itself stays
+    # CGO-free, which the cross-build job proves with CGO_ENABLED=0.
+    env:
+      CGO_ENABLED: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Gofmt
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then
+            echo "gofmt needs to be run on:"
+            echo "$out"
+            exit 1
+          fi
+      - name: Vet
+        run: CGO_ENABLED=0 go vet ./...
+      - name: Test with coverage (race)
+        run: go test -race -covermode=atomic -coverprofile=cover.out ./...
+      - name: Enforce 100% coverage
+        run: |
+          go tool cover -func=cover.out
+          # The profile, not the rounded percentage: "total: 99.95%" prints as
+          # 100.0%. A profile line is `file:from,to numStatements hitCount`;
+          # a block with statements and no hits was never entered.
+          uncovered=$(awk '$NF == 0 && $(NF-1) > 0' cover.out)
+          if [ -n "$uncovered" ]; then
+            echo "::error::these blocks were never entered"
+            echo "$uncovered"
+            exit 1
+          fi
+          echo "every block with a statement in it was entered"
+
+  # The size caps are arithmetic on lengths read from the file; on a 32-bit
+  # target int is 32 bits wide, so the whole suite, bombs included, runs there.
+  test-32bit:
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "0"
+      GOARCH: "386"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Test (linux/386)
+        run: go test ./...
+
+  # A short fuzz session on every change; the committed corpus under
+  # testdata/fuzz is replayed by the test job already.
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Fuzz FuzzParse for 30 seconds
+        run: go test -run '^$' -fuzz '^FuzzParse$' -fuzztime 30s .
+
+  vulns:
+    # The organisation's lane, defined once in go-richdoc/.github.
+    uses: go-richdoc/.github/.github/workflows/vulns.yml@main
+
+  cross-build:
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "0"
+    strategy:
+      fail-fast: false
+      # goos and goarch separately: the matrix carries the two values and no
+      # shell parses a "linux/amd64" string.
+      matrix:
+        include:
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: 386 }
+          - { goos: linux, goarch: arm }
+          - { goos: linux, goarch: arm64 }
+          - { goos: linux, goarch: riscv64 }
+          - { goos: linux, goarch: ppc64le }
+          - { goos: linux, goarch: s390x }
+          - { goos: linux, goarch: loong64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+          - { goos: windows, goarch: amd64 }
+          - { goos: js, goarch: wasm }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: go build ./...
