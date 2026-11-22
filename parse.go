@@ -10,7 +10,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/go-richdoc/richdoc"
-	"golang.org/x/text/encoding"
 )
 
 // Parse reads an RTF document into a richdoc document.
@@ -132,7 +131,8 @@ type reader struct {
 	styles   map[int]*style
 	curStyle int
 	styleBuf []byte
-	decoders map[int]*encoding.Decoder
+	decoders map[int]*decoder
+	dbuf     []byte // the text of the last single-byte decode; see decode
 
 	lists     map[int]*listDef
 	overrides map[int]int
@@ -162,7 +162,7 @@ func newReader(src []byte, lim Limits) *reader {
 		lim:       lim,
 		docCP:     cpDefault,
 		fontCP:    map[int]int{},
-		decoders:  map[int]*encoding.Decoder{},
+		decoders:  map[int]*decoder{},
 		styles:    map[int]*style{},
 		curStyle:  -1,
 		lists:     map[int]*listDef{},
@@ -271,7 +271,7 @@ func (r *reader) finalize() {
 		blocks := r.closeFrame()
 		if len(blocks) > 0 {
 			r.node()
-			st.parent.segs = append(st.parent.segs, seg{inl: richdoc.Footnote{Blocks: blocks}})
+			st.parent.segs = push(st.parent.segs, seg{inl: richdoc.Footnote{Blocks: blocks}})
 		}
 	case st.own&ownField != 0:
 		r.endField()
@@ -280,7 +280,7 @@ func (r *reader) finalize() {
 	case st.own&ownBookmark != 0:
 		if name := strings.TrimSpace(string(r.bkName)); name != "" && name != "_GoBack" {
 			r.node()
-			st.fr.segs = append(st.fr.segs, seg{inl: richdoc.Anchor{ID: name}})
+			st.fr.segs = push(st.fr.segs, seg{inl: richdoc.Anchor{ID: name}})
 		}
 	}
 }

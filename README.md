@@ -58,12 +58,38 @@ Every limit refuses: `Parse` returns an error wrapping `ErrLimit` (or
 
 | Limit | Default | Guards |
 |---|---|---|
-| `MaxInput` | 256 MiB | source size, checked before reading |
+| `MaxInput` | 16 MiB | source size, checked before reading (256 MiB before v0.1.2); raise it for a larger source |
 | `MaxDepth` | 256 | group nesting; the reader uses its own stack, never recursion |
 | `MaxBin` | 64 MiB | one `\binN` payload; N is clamped to 32 bits and to the bytes left in the input |
 | `MaxPict` | 64 MiB | one picture, hex or binary, summed across chunks |
-| `MaxNodes` | 4 Mi | blocks, inlines, cells, styles and lists, so definition floods count |
+| `MaxNodes` | 1 Mi | blocks, inlines, cells, styles and lists, so definition floods count (4 Mi before v0.1.2) |
 | `MaxText` | 256 MiB | total text, checked before a run is copied |
+
+**Amplification.** Under the default limits, `Parse` allocates at most **80
+bytes for each byte of input, plus 256 KiB** whatever the input. The worst input
+known, differently formatted one-letter runs (`\b\strike`, then `\i a\i0 a`
+repeated, 7 nodes in 9 bytes), costs 65 times its size at worst; one footnote or
+empty cell after another, 50 to 60; a document of ASCII text costs 3, one of
+accents 7 to 8. The constant is that worst with a margin of about a fifth.
+
+The method is a sweep across growth boundaries. A slice that doubles leaves its
+worst ratio just past the doubling, and what doubles is a count of runs, cells
+or footnotes, not a number of bytes, so a table of round sizes can miss the
+point by luck (one input did, at 140,000 repetitions). `TestAmplification`
+tries every probe at 105 sizes, eight to each doubling of the input from 1 KiB
+to 8 MiB (one, to 2 MiB, under `-race`, which is minutes slower and does not
+change what is allocated), and the one input that broke the gate, by name. The probes are those
+of the v0.1.1 reviews (long field instructions, differently formatted runs, long
+metadata, high bytes, nested fields at depths 1, 16, 100 and 1000), repeated
+short groups, paragraphs, rows and list items, footnotes, cells with no row, the
+densest runs, a long run inside every capped string, and every destination. The
+wrappers a run will get (bold, italic, strike) count as nodes when the run is
+made.
+
+The absolute worst case is the constant times `MaxInput`: with the defaults,
+80 x 16 MiB, **about 1.25 GiB** (256 MiB before v0.1.2, which made it 20 GiB). A
+reader that raises `MaxInput` or `MaxNodes` raises the figure with it, at about
+160 bytes a node.
 
 Numeric parameters saturate at 32 bits however many digits they have (an 8 MB
 parameter costs one pass and under 1 MiB). Link targets pass `safeURL`.
@@ -99,8 +125,9 @@ runs, `\'hh` and `\uN`, a table row per paragraph):
 |---|---|---|
 | 1 MB synthetic, v0.1.0 | 568,007 | 16.2 MB |
 | 1 MB synthetic, v0.1.1 | 305,874 | 13.1 MB |
+| 1 MB synthetic, v0.1.2 | 236,352 | 10.8 MB |
 
-`TestAllocationsOfAMegabyte` holds a ceiling of 320,000 allocations on that
+`TestAllocationsOfAMegabyte` holds a ceiling of 250,000 allocations on that
 document. Allocation counts are exact. Times were taken at a 1-minute load far
 past the point where times mean anything, so none is published. The reference
 for correctness is LibreOffice (below); a speed comparison with it would be a

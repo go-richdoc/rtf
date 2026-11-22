@@ -113,7 +113,7 @@ func (r *reader) endPict() {
 		img.Scale = sx
 	}
 	r.node()
-	st.fr.segs = append(st.fr.segs, seg{inl: img})
+	st.fr.segs = push(st.fr.segs, seg{inl: img})
 }
 
 // points is a size given in twips, scaled by a percentage when there is one,

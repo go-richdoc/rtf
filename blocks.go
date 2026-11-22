@@ -80,7 +80,7 @@ func addText[T string | []byte](r *reader, s T) {
 	merge := !f.noMerge
 	f.noMerge = false
 	start := len(f.buf)
-	f.buf = append(f.buf, s...)
+	f.buf = append(grow(f.buf, len(s)), s...)
 	if n := len(f.segs); n > 0 && merge {
 		last := &f.segs[n-1]
 		if last.inl == nil && last.end == start && last.bold == st.bold && last.italic == st.italic && last.strike == st.strike {
@@ -88,53 +88,74 @@ func addText[T string | []byte](r *reader, s T) {
 			return
 		}
 	}
+	// The text, and the wrapper inlines inlines will make for it.
 	r.node()
-	f.segs = append(f.segs, seg{start: start, end: len(f.buf), bold: st.bold, italic: st.italic, strike: st.strike})
+	for _, wrapped := range [...]bool{st.strike, st.italic, st.bold} {
+		if wrapped {
+			r.node()
+		}
+	}
+	f.segs = push(f.segs, seg{start: start, end: len(f.buf), bold: st.bold, italic: st.italic, strike: st.strike})
+}
+
+// push appends v to s, growing it as grow does.
+func push[E any](s []E, v E) []E { return append(grow(s, 1), v) }
+
+// grow returns s with room for n more elements, doubling the capacity when it
+// has to make room. append grows a large slice by a quarter, and the copies it
+// leaves behind add up to five times the final size: for a document of
+// one-letter runs, most of what was allocated.
+func grow[E any](s []E, n int) []E {
+	if len(s)+n <= cap(s) {
+		return s
+	}
+	grown := make([]E, len(s), max(2*len(s), len(s)+n))
+	copy(grown, s)
+	return grown
 }
 
 // inline adds an inline to the paragraph in progress.
 func (r *reader) inline(in richdoc.Inline) {
 	if r.st.dest == dBody && !r.st.hidden {
 		r.node()
-		r.st.fr.segs = append(r.st.fr.segs, seg{inl: in})
+		r.st.fr.segs = push(r.st.fr.segs, seg{inl: in})
 	}
 }
 
 // inlines builds richdoc inlines from a run of segments, each of which was
-// counted when it was made; only the wrappers are counted here. Underline,
+// counted when it was made, with the wrappers it will get here. Underline,
 // size and colour are not in the model and are not carried.
 func (r *reader) inlines(fr *frame, segs []seg) []richdoc.Inline {
-	// One string holds the text of every run, and each Text is a piece of it.
-	lo, hi := -1, 0
-	for _, s := range segs {
-		if s.inl == nil {
-			if lo < 0 {
-				lo = s.start
-			}
-			hi = s.end
-		}
-	}
-	var all string
-	if lo >= 0 {
-		all = string(fr.buf[lo:hi])
-	}
+	// One string holds the text of each contiguous group of runs, and each Text
+	// is a piece of it. A group ends at an inline, or where the buffer skips the
+	// bytes of a field already built: copying the whole span from the first run
+	// to the last would copy those bytes again at every level of nesting.
 	out := make([]richdoc.Inline, 0, len(segs))
-	for _, s := range segs {
+	var all string
+	lo, prev := 0, -1 // the group's offset in fr.buf, and where the last run ended
+	for i, s := range segs {
 		if s.inl != nil {
 			out = append(out, s.inl)
+			prev = -1
 			continue
 		}
+		if s.start != prev {
+			lo = s.start
+			hi := s.end
+			for j := i + 1; j < len(segs) && segs[j].inl == nil && segs[j].start == hi; j++ {
+				hi = segs[j].end
+			}
+			all = string(fr.buf[lo:hi])
+		}
+		prev = s.end
 		var in richdoc.Inline = richdoc.Text{Value: all[s.start-lo : s.end-lo]}
 		if s.strike {
-			r.node()
 			in = richdoc.Strikethrough{Inlines: []richdoc.Inline{in}}
 		}
 		if s.italic {
-			r.node()
 			in = richdoc.Emph{Inlines: []richdoc.Inline{in}}
 		}
 		if s.bold {
-			r.node()
 			in = richdoc.Strong{Inlines: []richdoc.Inline{in}}
 		}
 		out = append(out, in)
@@ -175,12 +196,12 @@ func (r *reader) endPara(force bool) {
 	}
 	if lv := r.headingLevel(); lv > 0 {
 		r.closeLists(fr)
-		fr.blocks = append(fr.blocks, richdoc.Heading{Level: lv, Inlines: inl})
+		fr.blocks = push[richdoc.Block](fr.blocks, richdoc.Heading{Level: lv, Inlines: inl})
 	} else if ok, ordered, start, level := r.listOf(); ok {
 		r.addListItem(fr, richdoc.Paragraph{Inlines: inl, Classes: st.align.classes()}, ordered, start, level)
 	} else {
 		r.closeLists(fr)
-		fr.blocks = append(fr.blocks, richdoc.Paragraph{Inlines: inl, Classes: st.align.classes()})
+		fr.blocks = push[richdoc.Block](fr.blocks, richdoc.Paragraph{Inlines: inl, Classes: st.align.classes()})
 	}
 	if !force && !st.intbl {
 		fr.cellStart = len(fr.blocks)
@@ -275,7 +296,7 @@ func (r *reader) addListItem(fr *frame, para richdoc.Block, ordered bool, start,
 	}
 	top := fr.lists[len(fr.lists)-1]
 	r.node()
-	top.items = append(top.items, richdoc.ListItem{Blocks: []richdoc.Block{para}})
+	top.items = push(top.items, richdoc.ListItem{Blocks: []richdoc.Block{para}})
 	if ordered && level == 0 {
 		r.counters[r.st.ls]++
 	}
@@ -297,7 +318,7 @@ func (r *reader) popList(fr *frame) {
 		item.Blocks = append(item.Blocks, l)
 		return
 	}
-	fr.blocks = append(fr.blocks, l)
+	fr.blocks = push[richdoc.Block](fr.blocks, l)
 }
 
 func (r *reader) closeLists(fr *frame) {
@@ -322,7 +343,7 @@ func (r *reader) pageBreak() {
 	r.flushTable(fr)
 	r.closeLists(fr)
 	r.node()
-	fr.blocks = append(fr.blocks, richdoc.ThematicBreak{})
+	fr.blocks = push[richdoc.Block](fr.blocks, richdoc.ThematicBreak{})
 	fr.cellStart = len(fr.blocks)
 }
 
@@ -360,7 +381,7 @@ func (f *frame) startRow() {
 
 func (r *reader) addCellDef(f *frame) {
 	r.node()
-	f.defs = append(f.defs, f.pend)
+	f.defs = push(f.defs, f.pend)
 	f.pend = cellDef{}
 }
 
@@ -381,8 +402,8 @@ func (r *reader) endCell() {
 	start := min(fr.cellStart, len(fr.blocks))
 	content := slices.Clone(fr.blocks[start:])
 	fr.blocks = fr.blocks[:start]
-	fr.flags = append(fr.flags, fr.defAt(len(fr.cells)))
-	fr.cells = append(fr.cells, makeCell(content))
+	fr.flags = push(fr.flags, fr.defAt(len(fr.cells)))
+	fr.cells = push(fr.cells, makeCell(content))
 	fr.cellStart = len(fr.blocks)
 }
 
@@ -436,7 +457,9 @@ func (r *reader) endRow() {
 		return
 	}
 	header := fr.rowHdr && !fr.hasHeader && len(fr.rows) == 0
-	row := make([]richdoc.Cell, 0, len(fr.cells))
+	// The row is built in the cells' own array: a cell is written at or before
+	// the place it was read from, and fr.cells is dropped below.
+	row := fr.cells[:0]
 	fr.origins = append(fr.origins, make([]origin, max(0, len(fr.cells)-len(fr.origins)))...)
 	for i, c := range fr.cells {
 		fl := fr.flags[i]
@@ -460,7 +483,7 @@ func (r *reader) endRow() {
 	if header {
 		fr.header, fr.hasHeader = row, true
 	} else {
-		fr.rows = append(fr.rows, row)
+		fr.rows = push(fr.rows, row)
 	}
 	fr.cells, fr.flags, fr.defs, fr.rowHdr = nil, nil, nil, false
 }

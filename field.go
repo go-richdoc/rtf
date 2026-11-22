@@ -32,7 +32,7 @@ func (r *reader) endField() {
 	inl := r.inlines(fr, fr.segs[mark:])
 	fr.segs = fr.segs[:mark]
 	r.node()
-	fr.segs = append(fr.segs, seg{inl: richdoc.Link{URL: url, Title: title, Inlines: inl}})
+	fr.segs = push(fr.segs, seg{inl: richdoc.Link{URL: url, Title: title, Inlines: inl}})
 }
 
 // hyperlink reads a HYPERLINK field instruction (RTF 1.9.1 leaves field syntax

@@ -1,0 +1,11 @@
+The files in this directory (the .rtf inputs and the .golden outputs next to
+them) are test documents taken from the LibreOffice core repository, under the
+Mozilla Public License, v. 2.0, whose text is in the LICENSE file beside this
+one. They are not part of the Go package and are not linked into it.
+
+Exhibit A - Source Code Form License Notice (from LICENSE, as that text asks
+when the notice cannot go in each file: a notice in a LICENSE-bearing directory)
+
+  This Source Code Form is subject to the terms of the Mozilla Public
+  License, v. 2.0. If a copy of the MPL was not distributed with this
+  file, You can obtain one at https://mozilla.org/MPL/2.0/.
