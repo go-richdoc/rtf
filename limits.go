@@ -28,7 +28,7 @@ var ErrSyntax = errors.New("rtf: malformed binary data")
 type Limits struct {
 	// MaxInput is the largest source, in bytes. The default is 16 MiB, so that
 	// with the amplification bound (see the README) the most Parse can allocate
-	// under the default limits is about 1 GiB; raise it for a larger source and
+	// under the default limits is about 1.25 GiB; raise it for a larger source and
 	// the worst case grows with it.
 	MaxInput int
 
@@ -58,7 +58,7 @@ type Limits struct {
 }
 
 const (
-	defaultMaxInput = 16 << 20 // 256 MiB before v0.1.2: 64 times that is 16 GiB
+	defaultMaxInput = 16 << 20 // 256 MiB before v0.1.2: 80 times that is 20 GiB
 	defaultMaxDepth = 256
 	defaultMaxBin   = 64 << 20
 	defaultMaxPict  = 64 << 20

@@ -65,21 +65,29 @@ Every limit refuses: `Parse` returns an error wrapping `ErrLimit` (or
 | `MaxNodes` | 1 Mi | blocks, inlines, cells, styles and lists, so definition floods count (4 Mi before v0.1.2) |
 | `MaxText` | 256 MiB | total text, checked before a run is copied |
 
-**Amplification.** Under the default limits, `Parse` allocates at most **64
+**Amplification.** Under the default limits, `Parse` allocates at most **80
 bytes for each byte of input, plus 256 KiB** whatever the input. The worst input
 known, differently formatted one-letter runs (`\b\strike`, then `\i a\i0 a`
-repeated, 7 nodes in 9 bytes) or one footnote or empty cell after another, costs
-about 50 to 52 times its size; a document of ASCII text costs 3, one of accents
-7 to 8. `TestAmplification` asserts the constant over the probes of the v0.1.1
-reviews (long field instructions, differently formatted runs, long metadata,
-high bytes, nested fields at depths 1, 16, 100 and 1000), repeated short
-groups, paragraphs, rows and list items, footnotes, cells with no row, the
-densest inlines, a long run inside every capped string, and every destination,
-each at 4 KiB to 8 MiB. The wrappers a run will get (bold, italic, strike) count
-as nodes when the run is made.
+repeated, 7 nodes in 9 bytes), costs 65 times its size at worst; one footnote or
+empty cell after another, 50 to 60; a document of ASCII text costs 3, one of
+accents 7 to 8. The constant is that worst with a margin of about a fifth.
+
+The method is a sweep across growth boundaries. A slice that doubles leaves its
+worst ratio just past the doubling, and what doubles is a count of runs, cells
+or footnotes, not a number of bytes, so a table of round sizes can miss the
+point by luck (one input did, at 140,000 repetitions). `TestAmplification`
+tries every probe at 105 sizes, eight to each doubling of the input from 1 KiB
+to 8 MiB (one, to 2 MiB, under `-race`, which is minutes slower and does not
+change what is allocated), and the one input that broke the gate, by name. The probes are those
+of the v0.1.1 reviews (long field instructions, differently formatted runs, long
+metadata, high bytes, nested fields at depths 1, 16, 100 and 1000), repeated
+short groups, paragraphs, rows and list items, footnotes, cells with no row, the
+densest runs, a long run inside every capped string, and every destination. The
+wrappers a run will get (bold, italic, strike) count as nodes when the run is
+made.
 
 The absolute worst case is the constant times `MaxInput`: with the defaults,
-64 x 16 MiB, **about 1 GiB** (256 MiB before v0.1.2, which made it 16 GiB). A
+80 x 16 MiB, **about 1.25 GiB** (256 MiB before v0.1.2, which made it 20 GiB). A
 reader that raises `MaxInput` or `MaxNodes` raises the figure with it, at about
 160 bytes a node.
 

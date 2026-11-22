@@ -6,6 +6,7 @@ package rtf
 import (
 	"errors"
 	"fmt"
+	"math"
 	"runtime/debug"
 	"strings"
 	"testing"
@@ -14,10 +15,11 @@ import (
 // Under the DEFAULT Limits, Parse allocates at most maxAmplification bytes for
 // each byte of input, plus fixedAllocation whatever the input: the code-page
 // table of a first accent, the maps of a reader. Both are stated in the README.
-// The worst input measured, a run of one-letter differently formatted runs
-// that is just long enough to meet MaxNodes, costs about 57 times its size.
+// The worst measured over the sweep of TestAmplification is 65, on the densest
+// run of formatted one-letter runs, just past a doubling of its slice; the
+// constant is that with a margin of about a fifth.
 const (
-	maxAmplification = 64
+	maxAmplification = 80
 	fixedAllocation  = 256 << 10
 )
 
@@ -85,29 +87,72 @@ func nestedFields(depth int) func(n int) string {
 	}
 }
 
+// sweepSizes are the input sizes tried for every case: from 1 KiB to the top,
+// at stepsPerOctave sizes to each doubling of the input. A slice that doubles
+// leaves its worst ratio just past the doubling, and what doubles is a count of
+// runs, cells or footnotes, not a number of bytes: sizes spaced a few percent
+// apart put one just past every doubling of every case, where a table of round
+// sizes would miss the point by luck.
+func sweepSizes() []int {
+	steps, top := 8, 8<<20
+	if raceEnabled {
+		// The race detector makes the sweep minutes long and does not change
+		// what is allocated.
+		steps, top = 1, 2<<20
+	}
+	var sizes []int
+	for i := 0; ; i++ {
+		n := int(1024 * math.Pow(2, float64(i)/float64(steps)))
+		if n > top {
+			return sizes
+		}
+		sizes = append(sizes, n)
+	}
+}
+
+// regressionInputs are inputs that once broke the gate, at the size that did:
+// the densest runs, 140,000 of them, 64.7 times their size when the
+// constant was 64.
+var regressionInputs = map[string]string{
+	"densest runs, 140000": `{\rtf1\ansi \b\strike ` + strings.Repeat(`\i a\i0 a`, 140000) + `}`,
+}
+
 func TestAmplification(t *testing.T) {
 	// The bomb tests read the memory the process holds, so this file sorts after
 	// bomb_test.go, which Go runs first; and what the largest of these inputs
 	// took is given back.
 	t.Cleanup(debug.FreeOSMemory)
-	for _, tc := range amplificationCases {
-		sizes := []int{1 << 12, 1 << 16, 1 << 20, 3 << 20, 4 << 20, 8 << 20}
-		if raceEnabled {
-			sizes = []int{1 << 12, 1 << 16, 1 << 20, 4 << 20}
+	check := func(t *testing.T, name, in string) float64 {
+		got, err := allocated(in, Limits{})
+		if err != nil && !errors.Is(err, ErrLimit) && !errors.Is(err, ErrSyntax) {
+			t.Fatal(err)
 		}
-		for _, n := range sizes {
-			in := tc.make(n)
-			t.Run(fmt.Sprintf("%s/%d", tc.name, n), func(t *testing.T) {
-				got, err := allocated(in, Limits{})
-				if err != nil && !errors.Is(err, ErrLimit) && !errors.Is(err, ErrSyntax) {
-					t.Fatal(err)
-				}
-				ratio := float64(got) / float64(len(in))
-				t.Logf("AMP %-36s %8d bytes in %5d MB %7.1fx limit-hit=%v", tc.name, len(in), got>>20, ratio, err != nil)
-				if got > uint64(maxAmplification*len(in)+fixedAllocation) {
-					t.Errorf("%d bytes for %d: %.1fx the input, more than %dx and %d KiB", got, len(in), ratio, maxAmplification, fixedAllocation>>10)
-				}
-			})
+		// The ratio the gate bounds: what is allocated past the fixed part.
+		ratio := max(0, float64(got)-fixedAllocation) / float64(len(in))
+		if got > uint64(maxAmplification*len(in)+fixedAllocation) {
+			t.Errorf("%s: %d bytes for %d: %.1fx the input past the fixed part, more than %dx and %d KiB", name, got, len(in), ratio, maxAmplification, fixedAllocation>>10)
 		}
+		return ratio
 	}
+	sizes := sweepSizes()
+	worst, worstCase := 0.0, ""
+	for _, tc := range amplificationCases {
+		t.Run(tc.name, func(t *testing.T) {
+			wr, wn := 0.0, 0
+			for _, n := range sizes {
+				in := tc.make(n)
+				if r := check(t, fmt.Sprintf("%s/%d", tc.name, n), in); r > wr {
+					wr, wn = r, len(in)
+				}
+			}
+			t.Logf("AMP %-36s worst %6.1fx at %8d bytes of %d sizes", tc.name, wr, wn, len(sizes))
+			if wr > worst {
+				worst, worstCase = wr, tc.name
+			}
+		})
+	}
+	for name, in := range regressionInputs {
+		t.Run(name, func(t *testing.T) { t.Logf("AMP %-36s %6.1fx", name, check(t, name, in)) })
+	}
+	t.Logf("AMP WORST %.1fx (%s) over %d sizes", worst, worstCase, len(sizes))
 }
