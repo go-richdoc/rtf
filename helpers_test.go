@@ -34,7 +34,7 @@ func dump(d *richdoc.Document) string {
 func dumpBlock(b *strings.Builder, bl richdoc.Block) {
 	switch v := bl.(type) {
 	case richdoc.Paragraph:
-		fmt.Fprintf(b, "P[%s]", dumpInl(v.Inlines))
+		fmt.Fprintf(b, "P%s[%s]", classSuffix(v.Classes), dumpInl(v.Inlines))
 	case richdoc.Heading:
 		fmt.Fprintf(b, "H%d[%s]", v.Level, dumpInl(v.Inlines))
 	case richdoc.ThematicBreak:
@@ -66,6 +66,13 @@ func dumpBlock(b *strings.Builder, bl richdoc.Block) {
 	default:
 		fmt.Fprintf(b, "?%T", bl)
 	}
+}
+
+func classSuffix(c []string) string {
+	if len(c) == 0 {
+		return ""
+	}
+	return "." + strings.Join(c, ".")
 }
 
 func dumpCells(cs []richdoc.Cell) string {

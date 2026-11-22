@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\\rtf1\\ansi {\\b a}{\\i a}{\\b a}{\\i a}{\\b a}{\\i a}{\\b a}{\\i a}{\\b a}{\\i a}{\\b a}{\\i a}{\\b a}{\\i a}{\\b a}{\\i a}}")

@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\\rtf1\\ansi \\trowd\\cellx1000\\cellx2000\\intbl A\\page B\\cell C\\cell\\row\\pard after\\par}")

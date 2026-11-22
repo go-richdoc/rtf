@@ -30,11 +30,26 @@ surrogate pairs), `\ansicpg` and per-font `\fcharset` code pages (via
 
 ## What it cannot carry
 
-richdoc has no place for these, so they are dropped, not approximated:
-underline, font size, colour, alignment, indents, footnote numbers. `\page` is
-mapped to a thematic break, the nearest thing the model has. Nested tables are
-flattened into the cell that holds them. Text in a table row that never ends
+Paragraph alignment (`\qc`, `\qr`, `\qj`; `\ql` and `\pard` reset it) is kept as
+a class on the paragraph: `align-center`, `align-right` or `align-justify`. richdoc
+v0.10.0 has a `Classes` field on a paragraph and nothing richer, so a renderer
+decides what the class looks like. Picture sizes were already carried.
+
+richdoc has no place for the rest, so they are dropped, not approximated:
+underline, font size, colour, fonts, indents, per-column table alignment,
+footnote numbers, headers and footers, and the WMF and EMF pictures. `\page` is
+mapped to a thematic break outside a table, the nearest thing the model has, and
+to nothing inside a cell. Nested tables are flattened into the cell that holds
+them. Text after a `\row` is after the table; text in a row that never ends
 becomes a paragraph, not a table.
+
+A list that starts at 0 (`\levelstartat0`) is counted from 0 here, but richdoc
+reads a start of 0 as "not set", so a consumer shows it from 1. A list resumed
+after k items starts at k.
+
+A pixel check is not made: a PNG or JPEG is kept when its signature and its
+header decode (`image/png`, `image/jpeg`, `DecodeConfig`), and decoding the
+pixels, or bounding the picture's size, is the caller's.
 
 ## Bounds
 
@@ -70,6 +85,11 @@ tables and links, not a pixel copy of Word's pagination. In exchange it is a
 small pure-Go dependency (no WASM engine, no CGO), every size is bounded, and
 the parser is fuzzed.
 
+What BentoPDF has and this does not: Writer's whole layout, that is font sizes,
+colours, underline, indents, headers and footers, WMF and EMF pictures, text in
+frames laid out where it was put, and page geometry. Here only structure,
+alignment and picture size survive.
+
 ## Measured
 
 `go test -bench . -cpu 1` on an Apple M4 Max, a 1 MB synthetic document (styled
@@ -77,17 +97,28 @@ runs, `\'hh` and `\uN`, a table row per paragraph):
 
 | | allocs/op | B/op |
 |---|---|---|
-| 1 MB synthetic | 576,743 | 16.4 MB |
-| 4.9 KB textutil sample | 240 | 8.8 KB |
+| 1 MB synthetic, v0.1.0 | 568,007 | 16.2 MB |
+| 1 MB synthetic, v0.1.1 | 305,874 | 13.1 MB |
 
-Allocation counts are exact. Times were taken at a 1-minute load of about 30,
-which is past the point where times mean anything, so none is published: the
-first reading (47 MB/s) is an upper bound on the cost, not a measurement. There
-is no reference RTF parser installed on the machine (`pandoc`, `unrtf` and
-`soffice` are absent; `textutil` only converts, to its own model), so no
-comparison is claimed and this is an open item, not a result. The allocation
-rate (about 0.55 allocations per input byte of a dense file) is the obvious
-target.
+`TestAllocationsOfAMegabyte` holds a ceiling of 320,000 allocations on that
+document. Allocation counts are exact. Times were taken at a 1-minute load far
+past the point where times mean anything, so none is published. The reference
+for correctness is LibreOffice (below); a speed comparison with it would be a
+comparison with a whole office suite, not a parser, so none is claimed and this
+is an open item, not a result.
+
+## Against LibreOffice
+
+`go test -tags looracle -run TestLibreOfficeOracle -v` converts every fixture
+with `soffice --headless --convert-to txt` and compares words with
+`richdoc.PlainText` of our result. It is a developer's check: CI does not run
+it, and it skips when LibreOffice is not installed (`$SOFFICE` or the macOS
+application path). On the 13 fixtures, run with LibreOffice from
+`/Applications` on 2026-11-22: ten give the same words, LibreOffice adding only
+the labels of list items (a bullet, `1.`), and three (`fdo47036`, `fdo49892`,
+`fdo57708`) differ because their text is in a positioned frame (`\posx`), which
+LibreOffice's text export leaves out and this reader keeps. Outside frames, every
+word of ours is in LibreOffice's output.
 
 ## Testing
 

@@ -14,7 +14,7 @@ import (
 // evaluated, fetched or run.
 type field struct {
 	mark int    // where in the paragraph's segments the result starts
-	inst string // the \fldinst text
+	inst []byte // the \fldinst text, at most maxInst bytes
 }
 
 // endField finishes a field. A HYPERLINK becomes a link around its result; any
@@ -25,11 +25,11 @@ func (r *reader) endField() {
 	fr := st.fr
 	f := st.fld
 	mark := min(f.mark, len(fr.segs))
-	url, title, ok := hyperlink(f.inst)
+	url, title, ok := hyperlink(string(f.inst))
 	if !ok || mark == len(fr.segs) {
 		return
 	}
-	inl := r.inlines(fr.segs[mark:])
+	inl := r.inlines(fr, fr.segs[mark:])
 	fr.segs = fr.segs[:mark]
 	r.node()
 	fr.segs = append(fr.segs, seg{inl: richdoc.Link{URL: url, Title: title, Inlines: inl}})
@@ -113,15 +113,16 @@ var safeSchemes = map[string]bool{
 }
 
 // safeURL accepts an allowed scheme, a fragment or a relative reference, and
-// refuses control characters, backslashes (a Windows path or a UNC share) and
-// a leading "//".
+// refuses control characters, backslashes (a Windows path or a UNC share), a
+// leading "//" (a network path) and a leading "/" (an absolute path: in a file
+// converted from disk it names a file of the reader's machine, not a page).
 func safeURL(u string) bool {
 	for i := 0; i < len(u); i++ {
 		if u[i] < 0x20 || u[i] == 0x7f || u[i] == '\\' {
 			return false
 		}
 	}
-	if strings.HasPrefix(u, "//") {
+	if strings.HasPrefix(u, "/") {
 		return false
 	}
 	// A scheme is what precedes the first colon, when nothing that ends a

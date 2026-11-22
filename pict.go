@@ -6,6 +6,8 @@ package rtf
 import (
 	"bytes"
 	"encoding/base64"
+	"image/jpeg"
+	"image/png"
 	"strconv"
 
 	"github.com/go-richdoc/richdoc"
@@ -81,13 +83,25 @@ func (r *reader) endPict() {
 	if st.hidden || p == nil {
 		return
 	}
+	// The header is read, not only the signature: png.DecodeConfig checks the
+	// IHDR chunk (its length, CRC, a non-zero size, a colour type and depth
+	// that go together) and jpeg.DecodeConfig the frame header. Neither decodes
+	// pixels, so a picture that declares a vast size is still the caller's to
+	// bound when it decodes; what is refused here is bytes that are not an
+	// image of the claimed kind.
 	var mime string
+	var err error
 	switch {
 	case p.kind == picPNG && bytes.HasPrefix(p.data, pngMagic):
 		mime = "image/png"
+		_, err = png.DecodeConfig(bytes.NewReader(p.data))
 	case p.kind == picJPEG && bytes.HasPrefix(p.data, jpegMagic):
 		mime = "image/jpeg"
+		_, err = jpeg.DecodeConfig(bytes.NewReader(p.data))
 	default:
+		return
+	}
+	if err != nil {
 		return
 	}
 	img := richdoc.Image{URL: "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(p.data)}
