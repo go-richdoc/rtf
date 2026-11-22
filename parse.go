@@ -217,8 +217,7 @@ func (r *reader) run() {
 	}
 	if r.err == nil {
 		r.flushPend()
-		for len(r.stack) > 0 {
-			r.pop()
+		for !r.pop() { // close every group the input left open
 		}
 		r.finish()
 	}

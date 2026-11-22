@@ -370,9 +370,7 @@ func (r *reader) endRow() {
 	}
 	header := fr.rowHdr && !fr.hasHeader && len(fr.rows) == 0
 	row := make([]richdoc.Cell, 0, len(fr.cells))
-	for len(fr.origins) < len(fr.cells) {
-		fr.origins = append(fr.origins, origin{})
-	}
+	fr.origins = append(fr.origins, make([]origin, max(0, len(fr.cells)-len(fr.origins)))...)
 	for i, c := range fr.cells {
 		fl := fr.flags[i]
 		if fl.hmerge == mergeCont && len(row) > 0 {

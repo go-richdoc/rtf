@@ -4,6 +4,8 @@
 package rtf
 
 import (
+	"unicode/utf16"
+
 	"github.com/go-richdoc/richdoc"
 )
 
@@ -380,11 +382,8 @@ func (r *reader) unicode(n int) {
 		}
 		r.hi = v
 	case v >= 0xDC00 && v < 0xE000:
-		if r.hi == 0 {
-			r.addString("�")
-			return
-		}
-		pair := 0x10000 + (r.hi-0xD800)<<10 + (v - 0xDC00)
+		// DecodeRune answers U+FFFD for a low half with no high half before it.
+		pair := utf16.DecodeRune(r.hi, v)
 		r.hi = 0
 		r.addString(string(pair))
 	default:

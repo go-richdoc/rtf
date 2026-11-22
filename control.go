@@ -68,7 +68,7 @@ func (r *reader) control() {
 		// \binN is read whether or not it is being skipped: its payload is
 		// not RTF and may contain braces.
 		r.flushPend()
-		r.bin(p, has)
+		r.bin(p)
 		if r.skip > 0 {
 			r.skip--
 		}
@@ -133,10 +133,7 @@ func (r *reader) hexByte(b byte) {
 // bin consumes the n bytes after \binN. The count is a 32-bit parameter, so it
 // is checked against the input that remains BEFORE anything is allocated or
 // skipped: a six-byte control word must not be able to name a gigabyte.
-func (r *reader) bin(n int, has bool) {
-	if !has {
-		return
-	}
+func (r *reader) bin(n int) {
 	if n < 0 || n > len(r.src)-r.pos {
 		r.fail(fmt.Errorf("%w: \\bin %d with %d bytes left", ErrSyntax, n, len(r.src)-r.pos))
 		return
