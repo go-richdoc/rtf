@@ -73,6 +73,8 @@ const (
 	maxInst = 8192
 	// maxStyleName bounds one style name.
 	maxStyleName = 256
+	// maxPend bounds the code-page bytes held before they are decoded.
+	maxPend = 1 << 16
 )
 
 func (l Limits) orDefaults() Limits {

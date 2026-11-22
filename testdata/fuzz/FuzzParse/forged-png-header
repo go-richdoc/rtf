@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\\rtf1\\ansi {\\pict\\pngblip 89504e470d0a1a0a0000000d494844520000000100000001080000000000000000}\\par}")

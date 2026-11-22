@@ -4,9 +4,14 @@
 package rtf
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"image"
+	"image/jpeg"
+	"image/png"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -333,7 +338,7 @@ func TestTables(t *testing.T) {
 		{"multi paragraph cell", `\trowd\cellx1\intbl a\par b\cell\row`, `T{a<br>b;}`},
 		{"list in cell", listTable + `\trowd\cellx1\intbl\ls1 a\par\ls1 b\cell\row`, `T{a<br>b;}`},
 		{"heading in cell", `\trowd\cellx1\intbl\outlinelvl0 a\par b\cell\row`, `T{a<br>b;}`},
-		{"page in cell", `\trowd\cellx1\intbl a\par\page b\cell\row`, `P[a]HRT{b;}`},
+		{"page in cell", `\trowd\cellx1\intbl a\par\page b\cell\row`, `T{a<br>b;}`},
 		{"row ends open cell", `\trowd\cellx1\intbl a\row`, `T{a;}`},
 		{"cell at depth two", `\trowd\cellx1\itap2 a\cell \itap1 b\cell\row`, `T{a<br>b;}`},
 		{"nested", `\trowd\cellx1\intbl\itap1 a\nestcell\itap2 n1\nestcell\itap2\nestrow\itap1 z\cell\row`, `T{a<br>n1<br>z;}`},
@@ -350,11 +355,17 @@ func TestTables(t *testing.T) {
 	}
 }
 
-// A 1x1 PNG and JPEG header, enough to carry the magic.
+// A real 1x1 PNG and JPEG: the reader reads their headers, not only the magic.
 var (
-	tinyPNG  = append([]byte("\x89PNG\r\n\x1a\n"), 1, 2, 3, 4)
-	tinyJPEG = append([]byte("\xff\xd8\xff\xe0"), 1, 2, 3, 4)
+	tinyPNG  = encodeImage(func(w *bytes.Buffer, m image.Image) { _ = png.Encode(w, m) })
+	tinyJPEG = encodeImage(func(w *bytes.Buffer, m image.Image) { _ = jpeg.Encode(w, m, nil) })
 )
+
+func encodeImage(enc func(*bytes.Buffer, image.Image)) []byte {
+	var b bytes.Buffer
+	enc(&b, image.NewGray(image.Rect(0, 0, 1, 1)))
+	return b.Bytes()
+}
 
 func TestPictures(t *testing.T) {
 	hx := func(b []byte) string { return hex.EncodeToString(b) }
@@ -393,8 +404,8 @@ func TestPictures(t *testing.T) {
 		t.Errorf("url %q want %q", got, want)
 	}
 	// \bin carries the same bytes raw, braces and all.
-	raw := append([]byte("\x89PNG\r\n\x1a\n"), '{', '}', '\\')
-	in := append([]byte(`{\rtf1{\pict\pngblip\bin11 `), raw...)
+	raw := append(bytes.Clone(tinyPNG), '{', '}', '\\')
+	in := append([]byte(`{\rtf1{\pict\pngblip\bin`+strconv.Itoa(len(raw))+` `), raw...)
 	in = append(in, []byte(`}x\par}`)...)
 	d, err := Parse(in, Limits{})
 	if err != nil {
@@ -529,6 +540,10 @@ func TestUnbalanced(t *testing.T) {
 			t.Errorf("%q: got %s want %s", in, got, want)
 		}
 	}
+}
+
+func decode(cp int, b []byte) string {
+	return string(newReader(nil, Limits{}.orDefaults()).decode(cp, b))
 }
 
 func TestDecode(t *testing.T) {

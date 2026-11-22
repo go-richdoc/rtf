@@ -101,6 +101,15 @@ func (r *reader) docWord(name string, p int, has, star bool) bool {
 	case "pard":
 		st.ls, st.ilvl, st.style, st.outline = 0, 0, 0, -1
 		st.pn, st.pnStart, st.intbl, st.itap = 0, 0, false, 0
+		st.align = alignNone
+	case "ql":
+		st.align = alignNone
+	case "qc":
+		st.align = alignCenter
+	case "qr":
+		st.align = alignRight
+	case "qj":
+		st.align = alignJustify
 	case "ls":
 		if st.dest == dListOverride {
 			r.ovrLS = p
@@ -205,6 +214,11 @@ func (r *reader) docWord(name string, p int, has, star bool) bool {
 	case "row":
 		if st.dest == dBody {
 			r.endRow()
+			// What follows a row is not in the table, whether or not a \pard
+			// says so: writers that omit it still mean the table is over.
+			if st.itap <= 1 {
+				st.intbl, st.itap = false, 0
+			}
 		}
 
 	// --- destinations ---
@@ -279,7 +293,7 @@ func (r *reader) docWord(name string, p int, has, star bool) bool {
 	case "bkmkstart":
 		if st.dest == dBody {
 			st.dest = dBookmark
-			r.bkName = ""
+			r.bkName = r.bkName[:0]
 			st.own |= ownBookmark
 		}
 	case "pn":
@@ -334,6 +348,9 @@ func (r *reader) docWord(name string, p int, has, star bool) bool {
 		if st.dest == dList {
 			st.dest = dListLevel
 			r.lvl++
+			if r.lvl < 9 && r.curList != nil {
+				r.curList.start[r.lvl] = 1 // \levelstartat's default
+			}
 		}
 	case "levelnfc", "levelnfcn":
 		if st.dest == dListLevel && r.lvl >= 0 && r.lvl < 9 && r.curList != nil {

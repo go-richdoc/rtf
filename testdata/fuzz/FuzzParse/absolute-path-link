@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\\rtf1\\ansi {\\field{\\*\\fldinst HYPERLINK \"/etc/passwd\"}{\\fldrslt abs}}\\par}")

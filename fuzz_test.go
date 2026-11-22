@@ -24,6 +24,13 @@ func FuzzParse(f *testing.F) {
 		`{\rtf1{\*\listtable{\list\listid1{\listlevel\levelnfc0}}}{\*\listoverridetable{\listoverride\listid1\ls1}}\ls1 a\par}`,
 		`{\rtf1\uc2荤ab\u-10179?\u-8704?}`,
 		`{\rtf1\uc2\u` + `8364 ab\u` + `55357?\u` + `56832?}`,
+		// the review of v0.1.0: an unpaired high surrogate at a group's end and
+		// at the input's end, a level that starts at 0, a \u inside a field
+		// instruction and inside a title
+		`{\rtf1{x\u` + `55357?}\u` + `56832?z\par}`,
+		`{\rtf1\u` + `55357?`,
+		`{\rtf1{\listtable{\list{\listlevel\levelnfc0\levelstartat0}\listid7}}{\listoverridetable{\listoverride\listid7\ls1}}\ls1 a\par}`,
+		`{\rtf1{\field{\*\fldinst \u` + `65?\u` + `65?\u` + `65?}{\fldrslt x}}{\info{\title \u` + `233?\u` + `233?}}}`,
 		`{\rtf1{\footnote n}{\object{\result r}}\'e9}`,
 		`{\rtf1 {\*\pn\pnlvlbody\pnstart3}a\par}`,
 	} {

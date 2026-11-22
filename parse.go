@@ -5,9 +5,12 @@ package rtf
 
 import (
 	"bytes"
+	"math"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/go-richdoc/richdoc"
+	"golang.org/x/text/encoding"
 )
 
 // Parse reads an RTF document into a richdoc document.
@@ -84,8 +87,9 @@ type state struct {
 	// paragraph properties, reset by \pard
 	ls, ilvl int
 	style    int
-	outline  int // \outlinelvlN, -1 when the paragraph does not say
-	pn       int // 0 none, 1 bulleted, 2 numbered
+	align    alignment // set by \qc, \qr, \qj, cleared by \ql and \pard
+	outline  int       // \outlinelvlN, -1 when the paragraph does not say
+	pn       int       // 0 none, 1 bulleted, 2 numbered
 	pnStart  int
 	intbl    bool
 	itap     int
@@ -127,7 +131,8 @@ type reader struct {
 	fontDef  int
 	styles   map[int]*style
 	curStyle int
-	styleBuf string
+	styleBuf []byte
+	decoders map[int]*encoding.Decoder
 
 	lists     map[int]*listDef
 	overrides map[int]int
@@ -139,8 +144,8 @@ type reader struct {
 
 	pnKind, pnStart int
 
-	title, author string
-	bkName        string
+	title, author []byte
+	bkName        []byte
 
 	nodes int
 	text  int
@@ -157,6 +162,7 @@ func newReader(src []byte, lim Limits) *reader {
 		lim:       lim,
 		docCP:     cpDefault,
 		fontCP:    map[int]int{},
+		decoders:  map[int]*encoding.Decoder{},
 		styles:    map[int]*style{},
 		curStyle:  -1,
 		lists:     map[int]*listDef{},
@@ -199,6 +205,7 @@ func (r *reader) run() {
 			r.push()
 		case '}':
 			r.flushPend()
+			r.flushHi()
 			r.skip = 0
 			r.star = false
 			r.pos++
@@ -217,6 +224,7 @@ func (r *reader) run() {
 	}
 	if r.err == nil {
 		r.flushPend()
+		r.flushHi()
 		for !r.pop() { // close every group the input left open
 		}
 		r.finish()
@@ -270,7 +278,7 @@ func (r *reader) finalize() {
 	case st.own&ownPict != 0:
 		r.endPict()
 	case st.own&ownBookmark != 0:
-		if name := strings.TrimSpace(r.bkName); name != "" && name != "_GoBack" {
+		if name := strings.TrimSpace(string(r.bkName)); name != "" && name != "_GoBack" {
 			r.node()
 			st.fr.segs = append(st.fr.segs, seg{inl: richdoc.Anchor{ID: name}})
 		}
@@ -302,9 +310,9 @@ func (r *reader) feed(b []byte) {
 	default:
 		return
 	}
-	for i := 0; i < len(b); {
+	for i := 0; i < len(b) && r.err == nil; {
 		if b[i] >= 0x80 {
-			r.pend = append(r.pend, b[i])
+			r.addPend(b[i])
 			i++
 			continue
 		}
@@ -312,16 +320,46 @@ func (r *reader) feed(b []byte) {
 		for j < len(b) && b[j] < 0x80 {
 			j++
 		}
-		// Refuse before the run is copied into a string: a text of the whole
-		// input must not cost a second copy of the input.
-		if r.st.dest == dBody && r.text+(j-i) > r.lim.MaxText {
-			r.fail(limitErr("more than %d bytes of text", r.lim.MaxText))
-			return
-		}
+		run := b[i:j]
+		// A destination with a cap takes no more than its room, so a run longer
+		// than the cap is not copied whole just to be cut.
+		run = run[:min(len(run), r.room())]
 		r.flushPend()
-		r.addString(string(b[i:j]))
+		r.addRun(run)
 		i = j
 	}
+}
+
+// room is how many more bytes of text the current destination keeps. A field
+// instruction, a title, an author and a bookmark name each have a cap; the
+// body is bounded by MaxText, which is a refusal and not a cut.
+func (r *reader) room() int {
+	switch r.st.dest {
+	case dFldInst:
+		// dFldInst is entered only inside a field, so fld is set.
+		return max(0, maxInst-len(r.st.fld.inst))
+	case dTitle:
+		return max(0, maxMeta-len(r.title))
+	case dAuthor:
+		return max(0, maxMeta-len(r.author))
+	case dBookmark:
+		return max(0, maxStyleName-len(r.bkName))
+	}
+	return math.MaxInt
+}
+
+// addPend queues one code-page byte. The queue is decoded and emptied every
+// maxPend bytes, so that a file of nothing but bytes above 0x7F cannot make
+// the reader hold it all before the first character is checked against a
+// limit; a destination that is already full takes none.
+func (r *reader) addPend(b byte) {
+	if r.room() == 0 {
+		return
+	}
+	if len(r.pend) >= maxPend {
+		r.flushPend()
+	}
+	r.pend = append(r.pend, b)
 }
 
 // flushPend decodes the code-page bytes gathered so far. They are kept
@@ -334,47 +372,87 @@ func (r *reader) flushPend() {
 	if c, ok := r.fontCP[r.st.font]; ok {
 		cp = c
 	}
-	s := decode(cp, r.pend)
+	out := r.decode(cp, r.pend)
 	r.pend = r.pend[:0]
-	r.addString(s)
+	r.addRun(out)
 }
 
-// addString puts decoded text where the current destination wants it.
-func (r *reader) addString(s string) {
+// flushHi turns a high surrogate that never met its low half into U+FFFD.
+func (r *reader) flushHi() {
 	if r.hi != 0 {
 		r.hi = 0
 		r.addString("�")
 	}
+}
+
+// addString puts text where the current destination wants it.
+func (r *reader) addString(s string) {
+	r.flushHi()
 	switch r.st.dest {
 	case dBody:
-		if r.st.hidden {
-			return
-		}
-		r.text += len(s)
-		if r.text > r.lim.MaxText {
-			r.fail(limitErr("more than %d bytes of text", r.lim.MaxText))
-			return
-		}
-		r.st.fr.addText(&r.st, s)
+		addBody(r, s)
+	default:
+		r.addMeta(s)
+	}
+}
+
+// addRun is addString for bytes, which reach the body with one copy: into the
+// paragraph's own buffer.
+func (r *reader) addRun(b []byte) {
+	r.flushHi()
+	if r.st.dest == dBody {
+		addBody(r, b)
+		return
+	}
+	r.addMeta(string(b))
+}
+
+// addBody puts text in the paragraph being read and counts it against MaxText.
+func addBody[T string | []byte](r *reader, s T) {
+	if r.st.hidden {
+		return
+	}
+	r.text += len(s)
+	if r.text > r.lim.MaxText {
+		r.fail(limitErr("more than %d bytes of text", r.lim.MaxText))
+		return
+	}
+	addText(r, s)
+}
+
+// addMeta puts text in a destination that is not the body, each of which keeps
+// a bounded amount of it.
+func (r *reader) addMeta(s string) {
+	switch r.st.dest {
 	case dFldInst:
-		if f := r.st.fld; f != nil && len(f.inst) < maxInst {
-			f.inst += s
+		if f := r.st.fld; f != nil {
+			f.inst = r.capAppend(f.inst, s, maxInst)
 		}
 	case dStyleSheet:
 		r.styleText(s)
 	case dTitle:
-		if len(r.title) < maxMeta {
-			r.title += s
-		}
+		r.title = r.capAppend(r.title, s, maxMeta)
 	case dAuthor:
-		if len(r.author) < maxMeta {
-			r.author += s
-		}
+		r.author = r.capAppend(r.author, s, maxMeta)
 	case dBookmark:
-		if len(r.bkName) < maxStyleName {
-			r.bkName += s
-		}
+		r.bkName = r.capAppend(r.bkName, s, maxStyleName)
 	}
+}
+
+// capAppend appends as much of s as fits under limit and no more, cutting on a
+// character boundary, and counts what it kept against MaxText. The cap is
+// applied to what is appended, so that one long run cannot go in whole.
+func (r *reader) capAppend(dst []byte, s string, limit int) []byte {
+	n := max(0, min(len(s), limit-len(dst)))
+	for n > 0 && n < len(s) && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	r.text += n
+	if r.text > r.lim.MaxText {
+		r.fail(limitErr("more than %d bytes of text", r.lim.MaxText))
+		return dst
+	}
+	return append(dst, s[:n]...)
 }
 
 // styleText reads the style sheet's text: each style's name, ended by ';'.
@@ -382,16 +460,14 @@ func (r *reader) styleText(s string) {
 	for {
 		i := strings.IndexByte(s, ';')
 		if i < 0 {
-			if len(r.styleBuf) < maxStyleName {
-				r.styleBuf += s
-			}
+			r.styleBuf = r.capAppend(r.styleBuf, s, maxStyleName)
 			return
 		}
-		r.styleBuf += s[:i]
+		r.styleBuf = r.capAppend(r.styleBuf, s[:i], maxStyleName)
 		if st, ok := r.styles[r.curStyle]; ok {
-			st.name = strings.ToLower(strings.TrimSpace(r.styleBuf))
+			st.name = strings.ToLower(strings.TrimSpace(string(r.styleBuf)))
 		}
-		r.styleBuf, r.curStyle = "", -1
+		r.styleBuf, r.curStyle = r.styleBuf[:0], -1
 		s = s[i+1:]
 	}
 }
@@ -400,10 +476,10 @@ func (r *reader) styleText(s string) {
 func (r *reader) document() *richdoc.Document {
 	out := &richdoc.Document{Blocks: r.doc}
 	meta := map[string]string{}
-	if s := strings.TrimSpace(r.title); s != "" {
+	if s := strings.TrimSpace(string(r.title)); s != "" {
 		meta["title"] = s
 	}
-	if s := strings.TrimSpace(r.author); s != "" {
+	if s := strings.TrimSpace(string(r.author)); s != "" {
 		meta["author"] = s
 	}
 	if len(meta) > 0 {

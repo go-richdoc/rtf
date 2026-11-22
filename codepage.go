@@ -4,7 +4,7 @@
 package rtf
 
 import (
-	"strings"
+	"bytes"
 
 	"golang.org/x/text/encoding"
 	"golang.org/x/text/encoding/charmap"
@@ -72,16 +72,24 @@ var charsetCP = map[int]int{
 
 // decode turns code-page bytes into text. Bytes that are not valid in the page
 // become U+FFFD, as x/text decodes them.
-func decode(cp int, b []byte) string {
+//
+// The decoder for a code page is built once per reader and reused: Bytes resets
+// it on every call, and building one was a fifth of the allocations of a
+// document with accents in it.
+func (r *reader) decode(cp int, b []byte) []byte {
 	if cp == cpUTF8 {
-		return strings.ToValidUTF8(string(b), "�")
+		return bytes.ToValidUTF8(b, []byte("�"))
 	}
-	enc, ok := codePage[cp]
+	if _, ok := codePage[cp]; !ok {
+		cp = cpDefault
+	}
+	dec, ok := r.decoders[cp]
 	if !ok {
-		enc = codePage[cpDefault]
+		dec = codePage[cp].NewDecoder()
+		r.decoders[cp] = dec
 	}
 	// Every table above is a charmap or a CJK decoder; none returns an error
 	// from Bytes except through U+FFFD substitution.
-	out, _ := enc.NewDecoder().Bytes(b)
-	return string(out)
+	out, _ := dec.Bytes(b)
+	return out
 }
