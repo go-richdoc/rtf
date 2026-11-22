@@ -83,13 +83,42 @@ func (r *reader) decode(cp int, b []byte) []byte {
 	if _, ok := codePage[cp]; !ok {
 		cp = cpDefault
 	}
-	dec, ok := r.decoders[cp]
+	d, ok := r.decoders[cp]
 	if !ok {
-		dec = codePage[cp].NewDecoder()
-		r.decoders[cp] = dec
+		d = newDecoder(codePage[cp])
+		r.decoders[cp] = d
+	}
+	if d.table != nil {
+		// A single-byte page is a table, and the text goes into one buffer the
+		// reader keeps: the transformer allocates its output at every call.
+		out := r.dbuf[:0]
+		for _, c := range b {
+			out = append(out, d.table[c]...)
+		}
+		r.dbuf = out
+		return out
 	}
 	// Every table above is a charmap or a CJK decoder; none returns an error
 	// from Bytes except through U+FFFD substitution.
-	out, _ := dec.Bytes(b)
+	out, _ := d.dec.Bytes(b)
 	return out
+}
+
+// A decoder turns the bytes of one code page into UTF-8. table is set for a
+// single-byte page, and holds the text of every byte, as dec gives it.
+type decoder struct {
+	dec   *encoding.Decoder
+	table *[256]string
+}
+
+func newDecoder(e encoding.Encoding) *decoder {
+	d := &decoder{dec: e.NewDecoder()}
+	if _, ok := e.(*charmap.Charmap); ok {
+		d.table = new([256]string)
+		for i := range d.table {
+			s, _ := d.dec.String(string([]byte{byte(i)}))
+			d.table[i] = s
+		}
+	}
+	return d
 }

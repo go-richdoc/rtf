@@ -62,8 +62,19 @@ Every limit refuses: `Parse` returns an error wrapping `ErrLimit` (or
 | `MaxDepth` | 256 | group nesting; the reader uses its own stack, never recursion |
 | `MaxBin` | 64 MiB | one `\binN` payload; N is clamped to 32 bits and to the bytes left in the input |
 | `MaxPict` | 64 MiB | one picture, hex or binary, summed across chunks |
-| `MaxNodes` | 4 Mi | blocks, inlines, cells, styles and lists, so definition floods count |
+| `MaxNodes` | 1 Mi | blocks, inlines, cells, styles and lists, so definition floods count (4 Mi before v0.1.2) |
 | `MaxText` | 256 MiB | total text, checked before a run is copied |
+
+**Amplification.** Under the default limits, `Parse` allocates at most **64
+bytes for each byte of input, plus 256 KiB** whatever the input. The worst input
+known, a run of one-letter runs alternately bold and italic and just long enough
+to meet `MaxNodes`, costs about 57 times its size; a document of ASCII text
+costs 3, one of accents 7 to 8. `TestAmplification` asserts the constant over the
+five probes of the v0.1.1 reviews (long field instructions, differently
+formatted runs, long metadata, high bytes, nested fields at depths 1, 16, 100
+and 1000), repeated short groups, paragraphs, rows and list items, a long run
+inside every capped string, and every destination, each at 4 KiB to 8 MiB. A
+reader that raises a limit raises the figure with it, at about 160 bytes a node.
 
 Numeric parameters saturate at 32 bits however many digits they have (an 8 MB
 parameter costs one pass and under 1 MiB). Link targets pass `safeURL`.
@@ -99,8 +110,9 @@ runs, `\'hh` and `\uN`, a table row per paragraph):
 |---|---|---|
 | 1 MB synthetic, v0.1.0 | 568,007 | 16.2 MB |
 | 1 MB synthetic, v0.1.1 | 305,874 | 13.1 MB |
+| 1 MB synthetic, v0.1.2 | 236,352 | 10.8 MB |
 
-`TestAllocationsOfAMegabyte` holds a ceiling of 320,000 allocations on that
+`TestAllocationsOfAMegabyte` holds a ceiling of 250,000 allocations on that
 document. Allocation counts are exact. Times were taken at a 1-minute load far
 past the point where times mean anything, so none is published. The reference
 for correctness is LibreOffice (below); a speed comparison with it would be a

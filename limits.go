@@ -45,7 +45,9 @@ type Limits struct {
 
 	// MaxNodes is how many blocks and inlines the document may hold. This is
 	// what bounds "\par\par\par..." and "\cell\cell...", which cost four bytes of
-	// input and a node of output each.
+	// input and a node of output each. A node costs about 160 bytes at the
+	// worst, so the default of 1 Mi bounds what a document of nothing but nodes
+	// can make to about 170 MB, however large the input.
 	MaxNodes int
 
 	// MaxText is the total bytes of text the document may carry.
@@ -57,7 +59,7 @@ const (
 	defaultMaxDepth = 256
 	defaultMaxBin   = 64 << 20
 	defaultMaxPict  = 64 << 20
-	defaultMaxNodes = 4 << 20
+	defaultMaxNodes = 1 << 20
 	defaultMaxText  = 256 << 20
 
 	// maxParam is the range of a control word's numeric parameter. The

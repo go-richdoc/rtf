@@ -26,40 +26,28 @@ func allocated(in string, lim Limits) (uint64, error) {
 	return b.TotalAlloc - a.TotalAlloc, err
 }
 
-func atMost(t *testing.T, what string, got uint64, limit uint64) {
+// The bytes of input a limit lets Parse read before it refuses are what the
+// amplification bound is applied to, not the bytes of an input far larger.
+// (The field instruction, the metadata and the high-byte inputs that were
+// absolute figures here are cases of TestAmplification.)
+func atMostPerByte(t *testing.T, what string, got uint64, read int) {
 	t.Helper()
-	if got > limit {
-		t.Errorf("%s allocated %d MB, more than %d MB", what, got>>20, limit>>20)
+	if got > uint64(maxAmplification*read+fixedAllocation) {
+		t.Errorf("%s allocated %d bytes for the %d it read, more than %dx", what, got, read, maxAmplification)
 	}
-}
-
-// A field instruction is appended to a buffer, not rebuilt as a string for every
-// character: 50 fields of 8200 characters cost 1.79 GB in v0.1.0.
-func TestFieldInstructionIsLinear(t *testing.T) {
-	var b strings.Builder
-	b.WriteString(`{\rtf1\ansi `)
-	for range 50 {
-		b.WriteString(`{\field{\*\fldinst `)
-		b.WriteString(strings.Repeat(`\u65?`, 8200))
-		b.WriteString(`}{\fldrslt x}}`)
-	}
-	b.WriteString(`}`)
-	n, err := allocated(b.String(), Limits{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	atMost(t, "50 long field instructions", n, 64<<20)
 }
 
 // Every node is counted when it is made, so MaxNodes bounds memory: 12 bytes of
 // input per two nodes, and v0.1.0 built all of them before it looked.
 func TestNodesAreCountedWhenMade(t *testing.T) {
-	in := `{\rtf1\ansi ` + strings.Repeat(`{\b a}{\i a}`, 400_000) + `}`
+	in := `{\rtf1\ansi ` + strings.Repeat(`{\b a}{\i a}`, 20_000) + `}`
 	n, err := allocated(in, Limits{MaxNodes: 1 << 16})
 	if !errors.Is(err, ErrLimit) {
 		t.Fatalf("err = %v, want ErrLimit", err)
 	}
-	atMost(t, "differently formatted runs without a paragraph", n, 32<<20)
+	// Twelve bytes make two runs and a wrapper for each: four nodes. The copy of
+	// the input that allocated makes is counted too, as it is in the table.
+	atMostPerByte(t, "differently formatted runs without a paragraph", n, 3*(1<<16)+len(in))
 }
 
 // A run of text that is whole in the input is cut to the cap, not let in
@@ -78,15 +66,6 @@ func TestMetadataCapsApplyAfterAppending(t *testing.T) {
 	if got := d.Meta["title"]; len(got) > maxMeta || strings.Contains(got, "�") {
 		t.Errorf("title cut inside a character: %d bytes, %q", len(got), got[len(got)-4:])
 	}
-}
-
-func TestHighBytesInMetadataAreBounded(t *testing.T) {
-	in := `{\rtf1\ansi {\info{\title ` + strings.Repeat("\xe9", 32<<20) + `}}}`
-	n, err := allocated(in, Limits{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	atMost(t, "32 MiB of accents in a title", n, 160<<20)
 }
 
 func TestMetadataCountsAgainstMaxText(t *testing.T) {
@@ -109,7 +88,47 @@ func TestHighBytesStopAtMaxText(t *testing.T) {
 	if !errors.Is(err, ErrLimit) {
 		t.Fatalf("err = %v, want ErrLimit", err)
 	}
-	atMost(t, "32 MiB of accents against a 1 MiB text limit", n, 48<<20)
+	atMostPerByte(t, "32 MiB of accents against a 1 MiB text limit", n, 1<<20+maxPend)
+}
+
+// A destination that is full queues no byte for decoding, however many come.
+func TestFullDestinationQueuesNothing(t *testing.T) {
+	r := newReader(nil, Limits{}.orDefaults())
+	r.st.dest = dTitle
+	r.title = make([]byte, maxMeta)
+	for range 100 {
+		r.addPend(0xe9)
+	}
+	if len(r.pend) != 0 {
+		t.Errorf("%d bytes queued for a full title", len(r.pend))
+	}
+	r.title = r.title[:maxMeta-1]
+	r.addPend(0xe9)
+	if len(r.pend) != 1 {
+		t.Errorf("%d bytes queued with room for one", len(r.pend))
+	}
+}
+
+// grow makes room only when there is none, and then makes it by doubling, so
+// that n appends cost a few copies and not n.
+func TestGrow(t *testing.T) {
+	s := make([]int, 3, 10)
+	if g := grow(s, 7); &g[0] != &s[0] || cap(g) != 10 {
+		t.Errorf("room for 7 more: reallocated (cap %d)", cap(g))
+	}
+	g := grow(s, 8)
+	if &g[0] == &s[0] || len(g) != 3 || cap(g) < 11 {
+		t.Errorf("no room for 8 more: len %d cap %d", len(g), cap(g))
+	}
+	if g := grow([]int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17}[:17:17], 1); cap(g) != 34 {
+		t.Errorf("a full slice of 17 doubled to %d, want 34", cap(g))
+	}
+	if g := grow([]int(nil), 100); cap(g) != 100 || len(g) != 0 {
+		t.Errorf("a large first request: len %d cap %d", len(g), cap(g))
+	}
+	if g := grow([]int(nil), 1); cap(g) != 16 {
+		t.Errorf("a first small request: cap %d, want 16", cap(g))
+	}
 }
 
 func TestCapAppend(t *testing.T) {
@@ -237,4 +256,4 @@ var (
 func hexString(b []byte) string { return hex.EncodeToString(b) }
 
 // allocCeiling is the ceiling TestAllocationsOfAMegabyte holds.
-const allocCeiling = 320_000 // 305874 measured
+const allocCeiling = 250_000 // 236352 measured

@@ -80,7 +80,7 @@ func addText[T string | []byte](r *reader, s T) {
 	merge := !f.noMerge
 	f.noMerge = false
 	start := len(f.buf)
-	f.buf = append(f.buf, s...)
+	f.buf = append(grow(f.buf, len(s)), s...)
 	if n := len(f.segs); n > 0 && merge {
 		last := &f.segs[n-1]
 		if last.inl == nil && last.end == start && last.bold == st.bold && last.italic == st.italic && last.strike == st.strike {
@@ -89,7 +89,23 @@ func addText[T string | []byte](r *reader, s T) {
 		}
 	}
 	r.node()
-	f.segs = append(f.segs, seg{start: start, end: len(f.buf), bold: st.bold, italic: st.italic, strike: st.strike})
+	f.segs = push(f.segs, seg{start: start, end: len(f.buf), bold: st.bold, italic: st.italic, strike: st.strike})
+}
+
+// push appends s to segs, growing it as grow does.
+func push(segs []seg, s seg) []seg { return append(grow(segs, 1), s) }
+
+// grow returns s with room for n more elements, doubling the capacity when it
+// has to make room. append grows a large slice by a quarter, and the copies it
+// leaves behind add up to five times the final size: for a document of
+// one-letter runs, most of what was allocated.
+func grow[E any](s []E, n int) []E {
+	if len(s)+n <= cap(s) {
+		return s
+	}
+	grown := make([]E, len(s), max(16, 2*len(s), len(s)+n))
+	copy(grown, s)
+	return grown
 }
 
 // inline adds an inline to the paragraph in progress.
@@ -104,26 +120,28 @@ func (r *reader) inline(in richdoc.Inline) {
 // counted when it was made; only the wrappers are counted here. Underline,
 // size and colour are not in the model and are not carried.
 func (r *reader) inlines(fr *frame, segs []seg) []richdoc.Inline {
-	// One string holds the text of every run, and each Text is a piece of it.
-	lo, hi := -1, 0
-	for _, s := range segs {
-		if s.inl == nil {
-			if lo < 0 {
-				lo = s.start
-			}
-			hi = s.end
-		}
-	}
-	var all string
-	if lo >= 0 {
-		all = string(fr.buf[lo:hi])
-	}
+	// One string holds the text of each contiguous group of runs, and each Text
+	// is a piece of it. A group ends at an inline, or where the buffer skips the
+	// bytes of a field already built: copying the whole span from the first run
+	// to the last would copy those bytes again at every level of nesting.
 	out := make([]richdoc.Inline, 0, len(segs))
-	for _, s := range segs {
+	var all string
+	lo, prev := 0, -1 // the group's offset in fr.buf, and where the last run ended
+	for i, s := range segs {
 		if s.inl != nil {
 			out = append(out, s.inl)
+			prev = -1
 			continue
 		}
+		if s.start != prev {
+			lo = s.start
+			hi := s.end
+			for j := i + 1; j < len(segs) && segs[j].inl == nil && segs[j].start == hi; j++ {
+				hi = segs[j].end
+			}
+			all = string(fr.buf[lo:hi])
+		}
+		prev = s.end
 		var in richdoc.Inline = richdoc.Text{Value: all[s.start-lo : s.end-lo]}
 		if s.strike {
 			r.node()

@@ -10,7 +10,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/go-richdoc/richdoc"
-	"golang.org/x/text/encoding"
 )
 
 // Parse reads an RTF document into a richdoc document.
@@ -132,7 +131,8 @@ type reader struct {
 	styles   map[int]*style
 	curStyle int
 	styleBuf []byte
-	decoders map[int]*encoding.Decoder
+	decoders map[int]*decoder
+	dbuf     []byte // the text of the last single-byte decode; see decode
 
 	lists     map[int]*listDef
 	overrides map[int]int
@@ -162,7 +162,7 @@ func newReader(src []byte, lim Limits) *reader {
 		lim:       lim,
 		docCP:     cpDefault,
 		fontCP:    map[int]int{},
-		decoders:  map[int]*encoding.Decoder{},
+		decoders:  map[int]*decoder{},
 		styles:    map[int]*style{},
 		curStyle:  -1,
 		lists:     map[int]*listDef{},
